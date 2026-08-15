@@ -78,10 +78,11 @@ const helpText = [
   "/server_stop — остановить сервер",
   "/players — показать игроков онлайн",
   "/logs — последние строки лога",
-  "/chat — последние строки консоли",
-  "/chat on — включить поток консоли",
-  "/chat off — выключить поток консоли",
-  "/command <команда> — выполнить команду Minecraft",
+  "/chat — последние сообщения игроков",
+  "/chat_on — включить поток сообщений игроков",
+  "/chat_off — выключить поток сообщений игроков",
+  "/<команда> [аргументы] — выполнить команду Minecraft, например /say hello",
+  "/command <команда> — старый формат команды Minecraft",
   "/help — показать эту справку"
 ].join("\n");
 
@@ -300,35 +301,25 @@ function cleanConsoleLine(line) {
     .trim();
 }
 
-function formatConsoleLine(line) {
+function formatPlayerChatLine(line) {
   const cleanLine = cleanConsoleLine(line);
   if (!cleanLine) return null;
 
-  const playerMatch = cleanLine.match(/(?:^|\s)<([^>]+)>\s*(.*)$/);
-  if (playerMatch) {
-    return `💬 ${playerMatch[1]}: ${playerMatch[2]}`;
-  }
-
-  const serverMatch = cleanLine.match(/\[Server\]\s*(.*)$/);
-  if (serverMatch) {
-    return `📢 Server: ${serverMatch[1]}`;
-  }
-
-  return `🖥️ ${cleanLine}`;
-}
-
-function parseConsoleLines(content) {
-  return content
-    .split("\n")
-    .map(formatConsoleLine)
-    .filter(Boolean);
+  // В логах Minecraft сообщения игроков имеют формат "<имя> текст".
+  // Остальные строки намеренно отбрасываются: их можно посмотреть через /logs.
+  const playerMatch = cleanLine.match(/<([^<>]+)>\s+(.+)$/);
+  return playerMatch ? `💬 ${playerMatch[1]}: ${playerMatch[2]}` : null;
 }
 
 async function chatRecentText() {
   const logs = await minecraftServer.getLogs();
   const content = typeof logs === "string" ? logs : logs?.content ?? JSON.stringify(logs);
-  const lines = parseConsoleLines(content).slice(-35);
-  return lines.length > 0 ? `Последние сообщения консоли:\n${lines.join("\n")}` : "Сообщений в логе нет.";
+  const lines = content
+    .split("\n")
+    .map(formatPlayerChatLine)
+    .filter(Boolean)
+    .slice(-35);
+  return lines.length > 0 ? `Последние сообщения игроков:\n${lines.join("\n")}` : "Сообщений игроков в логе нет.";
 }
 
 async function flushLiveChat() {
@@ -344,7 +335,7 @@ async function flushLiveChat() {
 function queueLiveConsoleLine(data) {
   if (liveChatSubscribers.size === 0) return;
 
-  const formatted = formatConsoleLine(data?.line ?? data?.rawLine);
+  const formatted = formatPlayerChatLine(data?.line ?? data?.rawLine);
   if (!formatted) return;
 
   liveChatBuffer.push(formatted);
@@ -365,7 +356,7 @@ async function setLiveChat(chatId, enabled) {
     const wasEmpty = liveChatSubscribers.size === 0;
     liveChatSubscribers.add(chatId);
     if (wasEmpty) await minecraftServer.subscribe("console");
-    return "Живой чат включён. Новые строки консоли будут приходить сюда. Выключить: /chat off";
+    return "Живой чат включён. Новые сообщения игроков будут приходить сюда. Выключить: /chat_off";
   }
 
   const wasSubscribed = liveChatSubscribers.delete(chatId);
@@ -410,19 +401,15 @@ async function handleCommand(update) {
       case "/logs":
         await sendMessage(message.chat.id, await logsText());
         break;
-      case "/chat": {
-        const chatAction = args[0]?.toLowerCase();
-        if (!chatAction) {
-          await sendMessage(message.chat.id, await chatRecentText());
-        } else if (chatAction === "on") {
-          await sendMessage(message.chat.id, await setLiveChat(message.chat.id, true));
-        } else if (chatAction === "off") {
-          await sendMessage(message.chat.id, await setLiveChat(message.chat.id, false));
-        } else {
-          await sendMessage(message.chat.id, "Использование: /chat, /chat on или /chat off");
-        }
+      case "/chat":
+        await sendMessage(message.chat.id, await chatRecentText());
         break;
-      }
+      case "/chat_on":
+        await sendMessage(message.chat.id, await setLiveChat(message.chat.id, true));
+        break;
+      case "/chat_off":
+        await sendMessage(message.chat.id, await setLiveChat(message.chat.id, false));
+        break;
       case "/command": {
         const minecraftCommand = args.join(" ").trim();
         if (!minecraftCommand) {
@@ -435,6 +422,18 @@ async function handleCommand(update) {
         break;
       }
       default:
+        if (normalizedCommand.startsWith("/")) {
+          const minecraftCommand = message.text.trim().slice(1).trim();
+          if (!minecraftCommand) {
+            await sendMessage(message.chat.id, "Напиши команду Minecraft после слеша, например: /say hello");
+            break;
+          }
+
+          await minecraftServer.executeCommand(minecraftCommand);
+          await sendMessage(message.chat.id, "Команда Minecraft улетела в консоль.");
+          break;
+        }
+
         await sendMessage(message.chat.id, "Неизвестная команда. Используй /help.");
     }
   } catch (error) {
@@ -451,8 +450,10 @@ async function configureTelegram() {
       { command: "server_stop", description: "Остановить сервер" },
       { command: "players", description: "Игроки онлайн" },
       { command: "logs", description: "Последние логи" },
-      { command: "chat", description: "Чат и консоль сервера" },
-      { command: "command", description: "Команда Minecraft" },
+      { command: "chat", description: "Последние сообщения игроков" },
+      { command: "chat_on", description: "Включить поток чата" },
+      { command: "chat_off", description: "Выключить поток чата" },
+      { command: "command", description: "Команда Minecraft (старый формат)" },
       { command: "help", description: "Список команд" }
     ]
   });
