@@ -9,10 +9,15 @@ Telegram bot for managing one exaroton Minecraft server.
 - `/server_stop` — stop the server
 - `/players` — show online players
 - `/logs` — show the latest server log lines
+- `/chat` — show and parse recent console lines
+- `/chat on` — enable live console delivery
+- `/chat off` — disable live console delivery
 - `/command <minecraft command>` — send a command to the server console
 - `/help` — show the command list
 
 All commands are restricted to the Telegram IDs in `ALLOWED_TELEGRAM_IDS`.
+
+`/chat on` subscribes to exaroton's console WebSocket and batches new console lines before sending them to Telegram. `/chat` without an argument reads the latest cached log lines. The live subscription is kept in memory and must be enabled again after a Render restart.
 
 ## Local setup
 

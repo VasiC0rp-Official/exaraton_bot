@@ -54,6 +54,23 @@ const statusNames = {
   10: "подготавливается"
 };
 
+const ONLINE_STATUS = 1;
+const OFFLINE_STATUS = 0;
+const WAIT_FOR_ONLINE_STATUSES = new Set([2, 4, 5, 6, 8, 10]);
+const STOP_POLL_INTERVAL_MS = 5000;
+const STOP_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
+const START_REQUEST_GRACE_MS = 90 * 1000;
+
+let serverActionQueue = Promise.resolve();
+let pendingStop = null;
+let stopPollTimer = null;
+let stopRequestVersion = 0;
+let lastStartRequestAt = 0;
+
+const liveChatSubscribers = new Set();
+let liveChatBuffer = [];
+let liveChatFlushTimer = null;
+
 const helpText = [
   "Доступные команды:",
   "/status — статус сервера и игроки",
@@ -61,6 +78,9 @@ const helpText = [
   "/server_stop — остановить сервер",
   "/players — показать игроков онлайн",
   "/logs — последние строки лога",
+  "/chat — последние строки консоли",
+  "/chat on — включить поток консоли",
+  "/chat off — выключить поток консоли",
   "/command <команда> — выполнить команду Minecraft",
   "/help — показать эту справку"
 ].join("\n");
@@ -155,6 +175,208 @@ async function logsText() {
   return lines.length > 0 ? `Последние строки лога:\n${lines.join("\n")}` : "В логе нихуя нет.";
 }
 
+function runServerAction(action) {
+  const result = serverActionQueue.then(action, action);
+  serverActionQueue = result.catch(() => undefined);
+  return result;
+}
+
+function cancelPendingStop() {
+  pendingStop = null;
+  stopRequestVersion += 1;
+  if (stopPollTimer) {
+    clearTimeout(stopPollTimer);
+    stopPollTimer = null;
+  }
+}
+
+function scheduleDeferredStop() {
+  if (stopPollTimer || !pendingStop) return;
+
+  const requestVersion = stopRequestVersion;
+  const deadline = pendingStop.deadline;
+
+  const poll = async () => {
+    stopPollTimer = null;
+    if (!pendingStop || requestVersion !== stopRequestVersion) return;
+
+    try {
+      const server = await refreshServer();
+      if (!pendingStop || requestVersion !== stopRequestVersion) return;
+
+      if (server.status === ONLINE_STATUS) {
+        const chatId = pendingStop.chatId;
+        pendingStop = null;
+        await minecraftServer.stop();
+        await sendMessage(chatId, "Сервер запустился, поэтому я сразу отправил команду остановки.");
+        return;
+      }
+
+      if (server.status === OFFLINE_STATUS || server.status === 7) {
+        const startRequestAt = pendingStop.startRequestAt;
+        const startIsStillPropagating = startRequestAt && Date.now() - startRequestAt < START_REQUEST_GRACE_MS;
+
+        if (startIsStillPropagating) {
+          stopPollTimer = setTimeout(() => void poll(), STOP_POLL_INTERVAL_MS);
+          return;
+        }
+
+        const chatId = pendingStop.chatId;
+        pendingStop = null;
+        await sendMessage(chatId, "Сервер не вышел в онлайн-состояние и уже недоступен.");
+        return;
+      }
+
+      if (Date.now() >= deadline) {
+        const chatId = pendingStop.chatId;
+        pendingStop = null;
+        await sendMessage(chatId, "Не удалось дождаться запуска сервера за 10 минут; автоматическая остановка отменена.");
+        return;
+      }
+
+      stopPollTimer = setTimeout(() => void poll(), STOP_POLL_INTERVAL_MS);
+    } catch (error) {
+      console.error("Deferred stop failed:", error);
+      if (pendingStop && requestVersion === stopRequestVersion) {
+        stopPollTimer = setTimeout(() => void poll(), STOP_POLL_INTERVAL_MS);
+      }
+    }
+  };
+
+  stopPollTimer = setTimeout(() => void poll(), STOP_POLL_INTERVAL_MS);
+}
+
+async function startServer() {
+  return runServerAction(async () => {
+    cancelPendingStop();
+    const server = await refreshServer();
+
+    if (server.status === OFFLINE_STATUS || server.status === 7) {
+      await minecraftServer.start();
+      lastStartRequestAt = Date.now();
+      return "Команда СТАРТУЕМ отправлена.";
+    }
+
+    return `Сервер уже не выключен: ${displayStatus(server.status)}.`;
+  });
+}
+
+async function stopServer(chatId) {
+  return runServerAction(async () => {
+    const server = await refreshServer();
+
+    if (server.status === ONLINE_STATUS) {
+      await minecraftServer.stop();
+      return "Команда СТОПЭ отправлена.";
+    }
+
+    const startIsStillPropagating =
+      server.status === OFFLINE_STATUS &&
+      lastStartRequestAt > 0 &&
+      Date.now() - lastStartRequestAt < START_REQUEST_GRACE_MS;
+
+    if (WAIT_FOR_ONLINE_STATUSES.has(server.status) || startIsStillPropagating) {
+      pendingStop = {
+        chatId,
+        deadline: Date.now() + STOP_WAIT_TIMEOUT_MS,
+        startRequestAt: lastStartRequestAt || null
+      };
+      scheduleDeferredStop();
+      return "Сервер ещё запускается. Я остановлю его автоматически, когда он перейдёт в онлайн-состояние.";
+    }
+
+    if (server.status === 3) {
+      return "Сервер уже останавливается.";
+    }
+
+    return `Остановить сервер сейчас нельзя: ${displayStatus(server.status)}.`;
+  });
+}
+
+function cleanConsoleLine(line) {
+  return String(line ?? "")
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\u0000/g, "")
+    .trim();
+}
+
+function formatConsoleLine(line) {
+  const cleanLine = cleanConsoleLine(line);
+  if (!cleanLine) return null;
+
+  const playerMatch = cleanLine.match(/(?:^|\s)<([^>]+)>\s*(.*)$/);
+  if (playerMatch) {
+    return `💬 ${playerMatch[1]}: ${playerMatch[2]}`;
+  }
+
+  const serverMatch = cleanLine.match(/\[Server\]\s*(.*)$/);
+  if (serverMatch) {
+    return `📢 Server: ${serverMatch[1]}`;
+  }
+
+  return `🖥️ ${cleanLine}`;
+}
+
+function parseConsoleLines(content) {
+  return content
+    .split("\n")
+    .map(formatConsoleLine)
+    .filter(Boolean);
+}
+
+async function chatRecentText() {
+  const logs = await minecraftServer.getLogs();
+  const content = typeof logs === "string" ? logs : logs?.content ?? JSON.stringify(logs);
+  const lines = parseConsoleLines(content).slice(-35);
+  return lines.length > 0 ? `Последние сообщения консоли:\n${lines.join("\n")}` : "Сообщений в логе нет.";
+}
+
+async function flushLiveChat() {
+  liveChatFlushTimer = null;
+  if (liveChatBuffer.length === 0 || liveChatSubscribers.size === 0) return;
+
+  const text = liveChatBuffer.splice(0).join("\n");
+  await Promise.allSettled(
+    [...liveChatSubscribers].map((chatId) => sendMessage(chatId, text))
+  );
+}
+
+function queueLiveConsoleLine(data) {
+  if (liveChatSubscribers.size === 0) return;
+
+  const formatted = formatConsoleLine(data?.line ?? data?.rawLine);
+  if (!formatted) return;
+
+  liveChatBuffer.push(formatted);
+  if (!liveChatFlushTimer) {
+    liveChatFlushTimer = setTimeout(() => {
+      void flushLiveChat().catch((error) => console.error("Live chat delivery failed:", error));
+    }, 800);
+  }
+}
+
+async function setLiveChat(chatId, enabled) {
+  if (enabled) {
+    const server = await refreshServer();
+    if (server.status !== ONLINE_STATUS) {
+      return `Живой чат можно включить только когда сервер онлайн. Сейчас: ${displayStatus(server.status)}.`;
+    }
+
+    const wasEmpty = liveChatSubscribers.size === 0;
+    liveChatSubscribers.add(chatId);
+    if (wasEmpty) await minecraftServer.subscribe("console");
+    return "Живой чат включён. Новые строки консоли будут приходить сюда. Выключить: /chat off";
+  }
+
+  const wasSubscribed = liveChatSubscribers.delete(chatId);
+  if (wasSubscribed && liveChatSubscribers.size === 0) {
+    await minecraftServer.unsubscribe("console");
+  }
+  return "Живой чат выключен.";
+}
+
+minecraftServer.on("console:line", queueLiveConsoleLine);
+
 async function handleCommand(update) {
   const message = update.message;
   if (!message?.text) return;
@@ -180,16 +402,27 @@ async function handleCommand(update) {
         await sendMessage(message.chat.id, await playersText());
         break;
       case "/server_start":
-        await minecraftServer.start();
-        await sendMessage(message.chat.id, "Команда СТАРТУЕМ отправлена.");
+        await sendMessage(message.chat.id, await startServer());
         break;
       case "/server_stop":
-        await minecraftServer.stop();
-        await sendMessage(message.chat.id, "Команда СТОПЭ отправлена.");
+        await sendMessage(message.chat.id, await stopServer(message.chat.id));
         break;
       case "/logs":
         await sendMessage(message.chat.id, await logsText());
         break;
+      case "/chat": {
+        const chatAction = args[0]?.toLowerCase();
+        if (!chatAction) {
+          await sendMessage(message.chat.id, await chatRecentText());
+        } else if (chatAction === "on") {
+          await sendMessage(message.chat.id, await setLiveChat(message.chat.id, true));
+        } else if (chatAction === "off") {
+          await sendMessage(message.chat.id, await setLiveChat(message.chat.id, false));
+        } else {
+          await sendMessage(message.chat.id, "Использование: /chat, /chat on или /chat off");
+        }
+        break;
+      }
       case "/command": {
         const minecraftCommand = args.join(" ").trim();
         if (!minecraftCommand) {
@@ -218,6 +451,7 @@ async function configureTelegram() {
       { command: "server_stop", description: "Остановить сервер" },
       { command: "players", description: "Игроки онлайн" },
       { command: "logs", description: "Последние логи" },
+      { command: "chat", description: "Чат и консоль сервера" },
       { command: "command", description: "Команда Minecraft" },
       { command: "help", description: "Список команд" }
     ]
