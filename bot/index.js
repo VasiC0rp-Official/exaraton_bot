@@ -160,7 +160,7 @@ async function handleCommand(update) {
   if (!message?.text) return;
 
   if (!isAllowed(update)) {
-    await sendMessage(message.chat.id, "У вас нет доступа к этому боту.");
+    await sendMessage(message.chat.id, "А у тебя нет доступа к этому боту. Сосамба не плакамба!");
     return;
   }
 
