@@ -132,7 +132,7 @@ async function serverStatusText() {
     `Сервер: ${server.name ?? EXAROTON_SERVER_ID}`,
     `Статус: ${displayStatus(server.status)}`,
     `Игроки: ${players.count}/${players.max}`,
-    playerNames.length > 0 ? `Сейчас онлайн: ${playerNames.join(", ")}` : "Сейчас онлайн: никого"
+    playerNames.length > 0 ? `Сейчас онлайн: ${playerNames.join(", ")}` : "Сейчас онлайн: нихуя"
   ].join("\n");
 }
 
@@ -152,7 +152,7 @@ async function logsText() {
   const logs = await minecraftServer.getLogs();
   const content = typeof logs === "string" ? logs : logs?.content ?? JSON.stringify(logs);
   const lines = content.split("\n").filter(Boolean).slice(-35);
-  return lines.length > 0 ? `Последние строки лога:\n${lines.join("\n")}` : "Лог пустой.";
+  return lines.length > 0 ? `Последние строки лога:\n${lines.join("\n")}` : "В логе нихуя нет.";
 }
 
 async function handleCommand(update) {
@@ -181,11 +181,11 @@ async function handleCommand(update) {
         break;
       case "/server_start":
         await minecraftServer.start();
-        await sendMessage(message.chat.id, "Команда запуска отправлена.");
+        await sendMessage(message.chat.id, "Команда СТАРТУЕМ отправлена.");
         break;
       case "/server_stop":
         await minecraftServer.stop();
-        await sendMessage(message.chat.id, "Команда остановки отправлена.");
+        await sendMessage(message.chat.id, "Команда СТОПЭ отправлена.");
         break;
       case "/logs":
         await sendMessage(message.chat.id, await logsText());
@@ -193,16 +193,16 @@ async function handleCommand(update) {
       case "/command": {
         const minecraftCommand = args.join(" ").trim();
         if (!minecraftCommand) {
-          await sendMessage(message.chat.id, "Использование: /command say Привет");
+          await sendMessage(message.chat.id, "Использование: /command say Иди нахуй");
           break;
         }
 
         await minecraftServer.executeCommand(minecraftCommand);
-        await sendMessage(message.chat.id, "Команда отправлена в консоль.");
+        await sendMessage(message.chat.id, "Команда улетела в консоль.");
         break;
       }
       default:
-        await sendMessage(message.chat.id, "Неизвестная команда. Используйте /help.");
+        await sendMessage(message.chat.id, "Неизвестная команда. Используй /help.");
     }
   } catch (error) {
     console.error("Command failed:", error);
