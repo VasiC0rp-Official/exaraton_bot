@@ -75,12 +75,13 @@ const helpText = [
   "Доступные команды:",
   "/status — статус сервера и игроки",
   "/server_start — запустить сервер",
+  "/server_restart — перезапустить сервер",
   "/server_stop — остановить сервер",
   "/players — показать игроков онлайн",
   "/logs — последние строки лога",
-  "/chat — последние сообщения игроков",
-  "/chat_on — включить поток сообщений игроков",
-  "/chat_off — выключить поток сообщений игроков",
+  "/chat — последние сообщения игроков и сервера",
+  "/chat_on — включить поток сообщений игроков и сервера",
+  "/chat_off — выключить поток сообщений игроков и сервера",
   "/<команда> [аргументы] — выполнить команду Minecraft, например /say hello",
   "/command <команда> — старый формат команды Minecraft",
   "/help — показать эту справку"
@@ -262,6 +263,20 @@ async function startServer() {
   });
 }
 
+async function restartServer() {
+  return runServerAction(async () => {
+    cancelPendingStop();
+    const server = await refreshServer();
+
+    if (server.status === ONLINE_STATUS) {
+      await minecraftServer.restart();
+      return "Команда РЕСТАРТУЕМ отправлена.";
+    }
+
+    return `Перезапустить сервер сейчас нельзя: ${displayStatus(server.status)}.`;
+  });
+}
+
 async function stopServer(chatId) {
   return runServerAction(async () => {
     const server = await refreshServer();
@@ -301,14 +316,19 @@ function cleanConsoleLine(line) {
     .trim();
 }
 
-function formatPlayerChatLine(line) {
+function formatChatLine(line) {
   const cleanLine = cleanConsoleLine(line);
   if (!cleanLine) return null;
 
   // В логах Minecraft сообщения игроков имеют формат "<имя> текст".
-  // Остальные строки намеренно отбрасываются: их можно посмотреть через /logs.
   const playerMatch = cleanLine.match(/<([^<>]+)>\s+(.+)$/);
-  return playerMatch ? `💬 ${playerMatch[1]}: ${playerMatch[2]}` : null;
+  if (playerMatch) {
+    return `💬 ${playerMatch[1]}: ${playerMatch[2]}`;
+  }
+
+  // Серверные сообщения могут иметь префикс вроде "[Not Secure] ".
+  const serverMatch = cleanLine.match(/\[Server\]\s*(.+)$/);
+  return serverMatch ? `📢 Server: ${serverMatch[1]}` : null;
 }
 
 async function chatRecentText() {
@@ -316,10 +336,12 @@ async function chatRecentText() {
   const content = typeof logs === "string" ? logs : logs?.content ?? JSON.stringify(logs);
   const lines = content
     .split("\n")
-    .map(formatPlayerChatLine)
+    .map(formatChatLine)
     .filter(Boolean)
     .slice(-35);
-  return lines.length > 0 ? `Последние сообщения игроков:\n${lines.join("\n")}` : "Сообщений игроков в логе нет.";
+  return lines.length > 0
+    ? `Последние сообщения игроков и сервера:\n${lines.join("\n")}`
+    : "Сообщений игроков или сервера в логе нет.";
 }
 
 async function flushLiveChat() {
@@ -335,7 +357,7 @@ async function flushLiveChat() {
 function queueLiveConsoleLine(data) {
   if (liveChatSubscribers.size === 0) return;
 
-  const formatted = formatPlayerChatLine(data?.line ?? data?.rawLine);
+  const formatted = formatChatLine(data?.line ?? data?.rawLine);
   if (!formatted) return;
 
   liveChatBuffer.push(formatted);
@@ -356,7 +378,7 @@ async function setLiveChat(chatId, enabled) {
     const wasEmpty = liveChatSubscribers.size === 0;
     liveChatSubscribers.add(chatId);
     if (wasEmpty) await minecraftServer.subscribe("console");
-    return "Живой чат включён. Новые сообщения игроков будут приходить сюда. Выключить: /chat_off";
+    return "Живой чат включён. Новые сообщения игроков и сервера будут приходить сюда. Выключить: /chat_off";
   }
 
   const wasSubscribed = liveChatSubscribers.delete(chatId);
@@ -394,6 +416,9 @@ async function handleCommand(update) {
         break;
       case "/server_start":
         await sendMessage(message.chat.id, await startServer());
+        break;
+      case "/server_restart":
+        await sendMessage(message.chat.id, await restartServer());
         break;
       case "/server_stop":
         await sendMessage(message.chat.id, await stopServer(message.chat.id));
@@ -447,6 +472,7 @@ async function configureTelegram() {
     commands: [
       { command: "status", description: "Статус сервера" },
       { command: "server_start", description: "Запустить сервер" },
+      { command: "server_restart", description: "Перезапустить сервер" },
       { command: "server_stop", description: "Остановить сервер" },
       { command: "players", description: "Игроки онлайн" },
       { command: "logs", description: "Последние логи" },
