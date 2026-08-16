@@ -296,7 +296,12 @@ function scheduleDeferredStop() {
         const chatId = pendingStop.chatId;
         pendingStop = null;
         markExternalActionSuppressed("stop");
-        await minecraftServer.stop();
+        try {
+          await minecraftServer.stop();
+        } catch (error) {
+          clearExternalActionSuppression();
+          throw error;
+        }
         await sendMessage(chatId, "Сервер запустился, поэтому я сразу отправил команду остановки.");
         return;
       }
@@ -341,9 +346,15 @@ async function startServer() {
     const server = await refreshServer();
 
     if (server.status === OFFLINE_STATUS || server.status === 7) {
-      await minecraftServer.start();
-      lastStartRequestAt = Date.now();
+      // Ставим подавление до API-вызова: статусный event может прийти прямо во время await.
       markExternalActionSuppressed("start");
+      try {
+        await minecraftServer.start();
+      } catch (error) {
+        clearExternalActionSuppression();
+        throw error;
+      }
+      lastStartRequestAt = Date.now();
       return "Команда СТАРТУЕМ отправлена.";
     }
 
@@ -357,8 +368,14 @@ async function restartServer() {
     const server = await refreshServer();
 
     if (server.status === ONLINE_STATUS) {
-      await minecraftServer.restart();
+      // Ставим подавление до API-вызова: статусный event может прийти прямо во время await.
       markExternalActionSuppressed("restart");
+      try {
+        await minecraftServer.restart();
+      } catch (error) {
+        clearExternalActionSuppression();
+        throw error;
+      }
       return "Команда РЕСТАРТУЕМ отправлена.";
     }
 
@@ -371,8 +388,14 @@ async function stopServer(chatId) {
     const server = await refreshServer();
 
     if (server.status === ONLINE_STATUS) {
-      await minecraftServer.stop();
+      // Ставим подавление до API-вызова: статусный event может прийти прямо во время await.
       markExternalActionSuppressed("stop");
+      try {
+        await minecraftServer.stop();
+      } catch (error) {
+        clearExternalActionSuppression();
+        throw error;
+      }
       return "Команда СТОПЭ отправлена.";
     }
 
@@ -605,9 +628,14 @@ function requestBody(request) {
 
 const server = http.createServer(async (request, response) => {
   try {
-    if (request.method === "GET" && request.url === "/health") {
+    const requestPath = new URL(
+      request.url ?? "/",
+      `http://${request.headers.host ?? "localhost"}`
+    ).pathname;
+
+    if ((request.method === "GET" || request.method === "HEAD") && requestPath === "/health") {
       response.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
-      response.end("ok");
+      response.end(request.method === "HEAD" ? undefined : "ok");
       return;
     }
 
