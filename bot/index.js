@@ -68,15 +68,6 @@ let stopPollTimer = null;
 let stopRequestVersion = 0;
 let lastStartRequestAt = 0;
 
-const NOTIFY_IGNORE_WINDOW_MS = 90 * 1000;
-const EXTERNAL_ACTION_MESSAGES = {
-  start: "Кто-то запустил сервер.",
-  restart: "Кто-то перезапустил сервер.",
-  stop: "Кто-то остановил сервер."
-};
-let previousServerStatus = null;
-let suppressedExternalAction = null;
-
 const liveChatSubscribers = new Set();
 let liveChatBuffer = [];
 let liveChatFlushTimer = null;
@@ -209,79 +200,24 @@ function runServerAction(action) {
   return result;
 }
 
-function markExternalActionSuppressed(action) {
-  suppressedExternalAction = {
-    action,
-    until: Date.now() + NOTIFY_IGNORE_WINDOW_MS
-  };
-}
-
-function clearExternalActionSuppression() {
-  suppressedExternalAction = null;
-}
-
-function isExternalActionSuppressed(action) {
-  if (!suppressedExternalAction) return false;
-  if (Date.now() >= suppressedExternalAction.until) {
-    suppressedExternalAction = null;
-    return false;
-  }
-  return suppressedExternalAction.action === action;
-}
-
-// Срабатывает на «финальном» статусе, через который стороннее действие проявляется:
-// start:  оффлайн/ожидание/загрузка -> 1 (онлайн)
-// restart: 4 (перезапускается) -> 1 (онлайн)
-// stop:   3 (останавливается) -> 0 (выключен)
-function classifyStatusTransition(prev, curr) {
-  if (prev === null || prev === curr || curr === undefined) return null;
-
-  if (prev === 4 && curr === ONLINE_STATUS) return "restart";
-  if (prev === 3 && curr === OFFLINE_STATUS) return "stop";
-
-  if (
-    curr === ONLINE_STATUS &&
-    (prev === OFFLINE_STATUS || prev === 7 || prev === 8 || WAIT_FOR_ONLINE_STATUSES.has(prev))
-  ) {
-    return "start";
-  }
-
-  return null;
-}
-
 async function broadcastToAllowedUsers(text) {
   await Promise.allSettled(
     [...allowedTelegramIds].map((chatId) =>
       sendMessage(chatId, text).catch((error) => {
-        console.error(`External action notification failed for ${chatId}:`, error);
+        console.error(`Status notification failed for ${chatId}:`, error);
       })
     )
   );
 }
 
-async function handleExternalStatusAction(action) {
-  if (isExternalActionSuppressed(action)) {
-    clearExternalActionSuppression();
-    return;
-  }
-  await broadcastToAllowedUsers(EXTERNAL_ACTION_MESSAGES[action]);
-}
-
 function attachStatusWatcher() {
   minecraftServer.on("status", async (server) => {
     try {
-      const curr = server?.status;
-      const prev = previousServerStatus;
-      previousServerStatus = curr;
-
-      if (prev === null || prev === curr || curr === undefined) return;
-
-      const action = classifyStatusTransition(prev, curr);
-      if (!action) return;
-
-      await handleExternalStatusAction(action);
+      if (server?.status === ONLINE_STATUS) {
+        await broadcastToAllowedUsers("Сервер запущен.");
+      }
     } catch (error) {
-      console.error("External status watcher failed:", error);
+      console.error("Status watcher failed:", error);
     }
   });
 }
@@ -312,13 +248,7 @@ function scheduleDeferredStop() {
       if (server.status === ONLINE_STATUS) {
         const chatId = pendingStop.chatId;
         pendingStop = null;
-        markExternalActionSuppressed("stop");
-        try {
-          await minecraftServer.stop();
-        } catch (error) {
-          clearExternalActionSuppression();
-          throw error;
-        }
+        await minecraftServer.stop();
         await sendMessage(chatId, "Сервер запустился, поэтому я сразу отправил команду остановки.");
         return;
       }
@@ -363,14 +293,7 @@ async function startServer() {
     const server = await refreshServer();
 
     if (server.status === OFFLINE_STATUS || server.status === 7) {
-      // Ставим подавление до API-вызова: статусный event может прийти прямо во время await.
-      markExternalActionSuppressed("start");
-      try {
-        await minecraftServer.start();
-      } catch (error) {
-        clearExternalActionSuppression();
-        throw error;
-      }
+      await minecraftServer.start();
       lastStartRequestAt = Date.now();
       return "Команда СТАРТУЕМ отправлена.";
     }
@@ -385,14 +308,7 @@ async function restartServer() {
     const server = await refreshServer();
 
     if (server.status === ONLINE_STATUS) {
-      // Ставим подавление до API-вызова: статусный event может прийти прямо во время await.
-      markExternalActionSuppressed("restart");
-      try {
-        await minecraftServer.restart();
-      } catch (error) {
-        clearExternalActionSuppression();
-        throw error;
-      }
+      await minecraftServer.restart();
       return "Команда РЕСТАРТУЕМ отправлена.";
     }
 
@@ -405,14 +321,7 @@ async function stopServer(chatId) {
     const server = await refreshServer();
 
     if (server.status === ONLINE_STATUS) {
-      // Ставим подавление до API-вызова: статусный event может прийти прямо во время await.
-      markExternalActionSuppressed("stop");
-      try {
-        await minecraftServer.stop();
-      } catch (error) {
-        clearExternalActionSuppression();
-        throw error;
-      }
+      await minecraftServer.stop();
       return "Команда СТОПЭ отправлена.";
     }
 
@@ -700,7 +609,6 @@ server.listen(Number(PORT), "0.0.0.0", async () => {
   }
   try {
     const initialServer = await refreshServer();
-    previousServerStatus = initialServer.status;
     attachStatusWatcher();
     await minecraftServer.subscribe();
     console.log(`Status watcher attached (initial: ${displayStatus(initialServer.status)})`);

@@ -24,15 +24,13 @@ All commands are restricted to the Telegram IDs in `ALLOWED_TELEGRAM_IDS`.
 
 `ALLOWED_TELEGRAM_IDS` is a comma-separated list of Telegram user IDs. For example, `1534687734,987654321` allows both users; spaces around commas are ignored. The value must contain at least one ID.
 
-## External action notifications
+## Server status notifications
 
-When the server is started, restarted or stopped *outside* of a Telegram command (e.g. from the exaroton panel, via the API, or because of a manual restart), the bot pushes one message to every ID in `ALLOWED_TELEGRAM_IDS`:
+Whenever exaroton reports that the server is online, the bot sends the same message to every ID in `ALLOWED_TELEGRAM_IDS`, regardless of how the server was started:
 
-- `Кто-то запустил сервер.`
-- `Кто-то перезапустил сервер.`
-- `Кто-то остановил сервер.`
+- `Сервер запущен.`
 
-Notifications triggered by the bot's own `/server_start`, `/server_restart` and `/server_stop` commands (including the auto-stop after a deferred start) are suppressed, so the bot doesn't spam itself.
+Stopping the server does not trigger a notification. Restarting it triggers `Сервер запущен.` when it returns online.
 
 ## Local setup
 
