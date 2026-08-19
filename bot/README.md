@@ -9,6 +9,7 @@ Telegram bot for managing one exaroton Minecraft server.
 - `/server_restart` — restart the server
 - `/server_stop` — stop the server
 - `/players` — show online players
+- `/credits` — check the remaining exaroton credits
 - `/logs` — show the latest server log lines
 - `/chat` — show the latest player and server messages
 - `/chat_on` — enable live player and server message delivery

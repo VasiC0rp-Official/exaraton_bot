@@ -37,6 +37,7 @@ if (allowedTelegramIds.size === 0) {
 }
 
 const telegramApiUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
+const exarotonApiUrl = "https://api.exaroton.com/v1";
 const exarotonClient = new Client(EXAROTON_API_TOKEN);
 const minecraftServer = exarotonClient.server(EXAROTON_SERVER_ID);
 
@@ -87,6 +88,7 @@ const helpText = [
   "/server_restart — перезапустить сервер",
   "/server_stop — остановить сервер",
   "/players — показать игроков онлайн",
+  "/credits — проверить баланс кредитов exaroton",
   "/logs — последние строки лога",
   "/chat — последние сообщения игроков и сервера",
   "/chat_on — включить поток сообщений игроков и сервера",
@@ -130,6 +132,21 @@ async function sendMessage(chatId, text) {
   for (const chunk of chunks) {
     await telegram("sendMessage", { chat_id: chatId, text: chunk });
   }
+}
+
+async function creditsText() {
+  const response = await fetch(`${exarotonApiUrl}/account/`, {
+    headers: {
+      Authorization: `Bearer ${EXAROTON_API_TOKEN}`
+    }
+  });
+  const result = await response.json();
+
+  if (!response.ok || !result.success || typeof result.data?.credits !== "number") {
+    throw new Error(`Не удалось получить баланс кредитов: ${result.error ?? response.statusText}`);
+  }
+
+  return `На балансе exaroton осталось кредитов: ${result.data.credits}`;
 }
 
 function isAllowed(update) {
@@ -527,6 +544,9 @@ async function handleCommand(update) {
       case "/players":
         await sendMessage(message.chat.id, await playersText());
         break;
+      case "/credits":
+        await sendMessage(message.chat.id, await creditsText());
+        break;
       case "/server_start":
         await sendMessage(message.chat.id, await startServer());
         break;
@@ -588,6 +608,7 @@ async function configureTelegram() {
       { command: "server_restart", description: "Перезапустить сервер" },
       { command: "server_stop", description: "Остановить сервер" },
       { command: "players", description: "Игроки онлайн" },
+      { command: "credits", description: "Баланс кредитов exaroton" },
       { command: "logs", description: "Последние логи" },
       { command: "chat", description: "Последние сообщения игроков" },
       { command: "chat_on", description: "Включить поток чата" },
