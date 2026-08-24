@@ -505,7 +505,7 @@ async function handleCommand(update) {
     }
   } catch (error) {
     console.error("Command failed:", error);
-    await sendMessage(message.chat.id, `Ошибка: ${error.message}`);
+    await sendMessage(message.chat.id, `Ашипка: ${error.message}`);
   }
 }
 
