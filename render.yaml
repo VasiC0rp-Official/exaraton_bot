@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: exaraton-telegram-bot
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: EXAROTON_API_TOKEN
+        sync: false
+      - key: EXAROTON_SERVER_ID
+        sync: false
+      - key: ALLOWED_TELEGRAM_IDS
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: WEBHOOK_PATH
+        value: /telegram/webhook
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
