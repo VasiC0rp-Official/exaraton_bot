@@ -210,10 +210,20 @@ async function broadcastToAllowedUsers(text) {
   );
 }
 
-function attachStatusWatcher() {
+function attachStatusWatcher(initialStatus) {
+  let lastStatus = initialStatus;
+
   minecraftServer.on("status", async (server) => {
     try {
-      if (server?.status === ONLINE_STATUS) {
+      const currentStatus = server?.status;
+      const justBecameOnline =
+        currentStatus === ONLINE_STATUS && lastStatus !== ONLINE_STATUS;
+
+      if (currentStatus !== undefined) {
+        lastStatus = currentStatus;
+      }
+
+      if (justBecameOnline) {
         await broadcastToAllowedUsers("Сервер запущен.");
       }
     } catch (error) {
@@ -609,7 +619,7 @@ server.listen(Number(PORT), "0.0.0.0", async () => {
   }
   try {
     const initialServer = await refreshServer();
-    attachStatusWatcher();
+    attachStatusWatcher(initialServer.status);
     await minecraftServer.subscribe();
     console.log(`Status watcher attached (initial: ${displayStatus(initialServer.status)})`);
   } catch (error) {

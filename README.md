@@ -26,7 +26,7 @@ All commands are restricted to the Telegram IDs in `ALLOWED_TELEGRAM_IDS`.
 
 ## Server status notifications
 
-Whenever exaroton reports that the server is online, the bot sends the same message to every ID in `ALLOWED_TELEGRAM_IDS`, regardless of how the server was started:
+When exaroton reports a transition from a non-online status to online, the bot sends the same message once to every ID in `ALLOWED_TELEGRAM_IDS`, regardless of how the server was started. Repeated online status updates do not send more messages. If the bot starts while the server is already online, that initial status does not trigger a notification:
 
 - `Сервер запущен.`
 
